@@ -1,0 +1,35 @@
+name: watch-forms
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: watch-forms
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - run: npx playwright install --with-deps chromium
+      - run: npm start
+        env:
+          FORM_URL: ${{ secrets.FORM_URL }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+      - name: Commit state
+        run: |
+          if ! git diff --quiet state.json; then
+            git config user.name "github-actions"
+            git config user.email "actions@github.com"
+            git commit -am "update state"
+            git push
+          fi
