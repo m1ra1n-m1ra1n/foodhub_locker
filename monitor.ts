@@ -9,6 +9,9 @@ const STATE_FILE = "state.json";
 
 // 停止中ページの文言。実際の停止中ページを見て調整してください
 const CLOSED_PATTERNS = [
+  /is now full/i,
+  /\bfull\b/i,
+  /技術的な詳細|Technical details/i,
   /回答を受け付けていません/,
   /not (currently )?accepting responses/i,
 ];
@@ -18,15 +21,32 @@ async function checkStatus(): Promise<Status> {
   try {
     const page = await browser.newPage({ locale: "ja-JP" });
     await page.goto(FORM_URL, { waitUntil: "networkidle", timeout: 60_000 });
-    await page.waitForTimeout(3000); // 描画完了を待つ
+
+    // 受付中の目印：質問の入力欄、またはページ送り・送信ボタン
+    const inputs = page.locator(
+      'input:not([type="hidden"]), textarea, [role="radio"], [role="checkbox"], [role="listbox"], [role="combobox"]'
+    );
+    const navButton = page.getByRole("button", { name: /次へ|送信|Next|Submit/i });
+    const openSignal = inputs.or(navButton);
+
+    // 停止中の目印
+    const closedSignal = page.getByText(/full|技術的な詳細|Technical details|受け付けていません|not accepting/i);
+
+    // 一定時間待つ代わりに、どちらかの目印が表示されるまで待つ（最大20秒）
+    await openSignal.or(closedSignal).first().waitFor({ timeout: 20_000 }).catch(() => {});
+
+    // 受付中の判定を先に行う（説明文に "full" が含まれていても誤判定しないため）
+    if ((await openSignal.count()) > 0) return "open";
 
     const text = await page.locator("body").innerText();
     if (CLOSED_PATTERNS.some((p) => p.test(text))) return "closed";
 
-    // 送信ボタンがあれば受付中と判定
-    const submit = page.getByRole("button", { name: /送信|Submit/i });
-    if ((await submit.count()) > 0) return "open";
-
+    // --- 調査用：判定できなかったときに中身を出力 ---
+    console.log("url:", page.url());
+    console.log("title:", await page.title());
+    console.log("text:", text.slice(0, 500).replace(/\s+/g, " "));
+    console.log("buttons:", await page.getByRole("button").allInnerTexts());
+    await page.screenshot({ path: "debug.png", fullPage: true });
     return "unknown";
   } finally {
     await browser.close();
